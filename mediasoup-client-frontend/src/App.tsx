@@ -1,11 +1,12 @@
 import * as mediasoupClient from "mediasoup-client";
-import { Producer, Transport } from "mediasoup-client/lib/types";
-import { memo, useEffect, useRef, useState } from "react";
+import { Transport } from "mediasoup-client/lib/types";
+import { useEffect, useRef, useState } from "react";
 
 function App() {
   const socketRef = useRef<WebSocket>(null);
-  const videoRef = useRef(null);
-  const consumerVideoRef = useRef(null); 
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const consumerVideoRef = useRef<HTMLVideoElement>(null); 
+  const [consumerStream, setConsumerStream] = useState<MediaStream>(); 
   const device = useRef<mediasoupClient.Device>();
   const producerTransport = useRef<Transport>();
   const consumerTransport = useRef<Transport>(); 
@@ -56,12 +57,47 @@ function App() {
     };
   }, []);
 
+  useEffect(()=> {
+    if(consumerVideoRef.current && consumerStream){
+      try {
+        const videoElement = consumerVideoRef.current;
+        videoElement.srcObject = consumerStream;
+  
+        const playVideo = async () => {
+          try {
+            await videoElement.play();
+            console.log("Consumer video playback started successfully");
+          } catch (error) {
+            console.error("Error during consumer video playback:", error);
+            // setPlaybackError(error.message);
+          }
+        };
+  
+        videoElement.onloadedmetadata = () => {
+          console.log("Consumer video metadata loaded");
+          playVideo();
+        };
+  
+        videoElement.onplay = () => console.log("Consumer video started playing");
+        videoElement.onpause = () => console.log("Consumer video paused");
+        videoElement.onwaiting = () => console.log("Consumer video is waiting for more data");
+        videoElement.onerror = (e) => console.error("Consumer video error:", e);
+      } catch(err){
+        console.error("ERROR PLAYING MEDIA ", err); 
+      }
+    } else if(!consumerStream){
+      console.log("NO CONSUMER STREAM"); 
+    } else if(!consumerVideoRef.current){
+      console.log('NO CONSUMER VIDEO REF'); 
+    }
+  }, [consumerStream])
+
   const loadDevice = async () => {
     try {
       const resp = JSON.stringify({ type: "getRouterRtpCapabilities" });
       socketRef.current.send(resp);
     } catch (error) {
-      console.error("ERROR INITIALISING");
+      // console.error("ERROR INITIALISING");
       console.error(error);
     }
   };
@@ -77,11 +113,13 @@ function App() {
 
     consumerTransport.current?.on('connect', ({dtlsParameters}, callback, errback) => {
       console.log("CONSUMER TRANSPORT ID IS: ", consumerTransport.current?.id)
+      console.log(dtlsParameters); 
       const msg = {
         type: "connectConsumerTransport", 
         transportId: consumerTransport.current?.id, 
         dtlsParameters
       }
+      console.log(msg); 
       socketRef.current?.send(JSON.stringify(msg)); 
       socketRef.current?.addEventListener(
         "message", 
@@ -129,20 +167,28 @@ function App() {
   const onSubscribe = async(event) => {
     // console.log("ON SUBSRIBE"); 
     // console.log(event.data); 
-    const {producerId, consumerId, kind, rtpParameters} = event.data; 
+    const {producerId, id, kind, rtpParameters} = event.data; 
     // const codecOption = {}; 
     const consumer = await consumerTransport.current?.consume({
-      id: consumerId,
+      id: id,
       producerId: producerId, 
       kind: kind, 
       rtpParameters: rtpParameters
     }); 
 
-    const stream = new MediaStream(); 
-    if(consumer) await stream.addTrack(consumer?.track);
-    console.log(consumer?.track); 
-    consumerVideoRef.current.srcObject = stream;
-    console.log(consumerVideoRef.current.srcObject);   
+
+    if(consumer){
+      // console.log("GETTING CONSUMER STREAM"); 
+      const stream = new MediaStream([consumer?.track]); 
+      // console.log(stream); 
+      // console.log('SETTING STREAM'); 
+      // console.log(consumerVideoRef.current);  
+      setConsumerStream(stream);
+      // console.log(consumerVideoRef.current);   
+    }
+    // }
+
+    // if(consumerVideoRef.current){
   }
 
   const consume = async(transport) => {
@@ -210,9 +256,11 @@ function App() {
         const resp = JSON.stringify(message);
         socketRef.current.send(resp);
         socketRef.current?.addEventListener("message", (resp: any) => {
-          const message = JSON.parse(resp.data); 
+          const message = JSON.parse(resp.data);
           if(message.type!='produced') return;  
-          callback(resp.data.data.id);
+          console.log('------------------------------------------------'); 
+          console.log(message);  
+          callback(message.data.id);
         });
       }
     );
@@ -226,8 +274,10 @@ function App() {
           break;
         case "connected": // videoRef.current.srObject = stream;
         {
-          videoRef.current.srcObject = stream;
-          console.log("published!!!!");
+          if(videoRef.current){
+            videoRef.current.srcObject = stream;
+            console.log("published!!!!");
+          }
           break;
         }
         case "failed":
@@ -353,7 +403,15 @@ function App() {
     <div className="App">
       <h1>Mediasoup Streaming</h1>
       <video ref={videoRef} autoPlay muted playsInline></video>
-      <video ref={consumerVideoRef} autoPlay playsInline></video>
+      
+      { consumerStream ?
+        <div>
+          <h1>Hello World</h1>
+          <video ref={consumerVideoRef} autoPlay controls playsInline style={{border: '1px solid red', width: '320px', height: '240px'}}></video>
+          <h1>Hello</h1>
+        </div>
+        : <h1>No Video</h1>
+      }
       <button onClick={startStreaming}>Start Streaming</button>
       <button onClick={subscribeToStream}>Subscribe</button>
       {/* <button onClick={stopStreaming}>Stop Streaming</button> */}
